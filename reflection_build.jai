@@ -30,7 +30,7 @@ build_file :: (path: string, workspace: Workspace) {
                 if !node.defined_type || already_seen(*seen, node.defined_type) {
                     continue;
                 }
-                assert(!catalog_finished, "Reflection: struct appeared after the catalog was baked.");
+                assert(!catalog_finished, "Reflection: struct '%' appeared after the catalog was baked.", node.defined_type.name);
                 // Compiler-owned pointers are used only by #run in this same compiler process.
                 // The target workspace converts its own Type_Info to relocatable Type values before baking.
                 source := sprint(STRUCT_REGISTRATION, cast(u64)node.defined_type, is_generated_context(node));
@@ -52,7 +52,7 @@ build_file :: (path: string, workspace: Workspace) {
                 if !node.external_type || already_seen(*seen, node.external_type) {
                     continue;
                 }
-                assert(!catalog_finished, "Reflection: enum appeared after the catalog was baked.");
+                assert(!catalog_finished, "Reflection: enum '%' appeared after the catalog was baked.", node.external_type.name);
                 source := sprint(ENUM_REGISTRATION, cast(u64)node);
                 add_build_string(source, workspace);
                 registrations_added = true;

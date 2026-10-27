@@ -9,6 +9,7 @@ Compiler :: #import "Compiler";
 Tables :: #import "Hash_Table";
 TablesWithCollisions :: #import "Hash_Table"(true);
 Hash :: #import "Hash";
+#load "live_reflection.jai";
 
 #scope_export
 
@@ -118,31 +119,38 @@ Reflection_Kind :: enum {
     None;
     Struct;
     Enum;
+    Value;
 }
 
 Metadata_Reference :: struct {
     kind: Reflection_Kind;
     struct_meta: *Struct_Metadata;
     enum_meta: *Enum_Metadata;
+    type_meta: Type_Metadata;
 }
 
 // Borrows one object and shared baked entries. Reacquire after moving/reloading the object.
 Reflection :: struct {
     root: Any;
     entries: []Entry;
+    options: Reflection_Options;
+    field_meta: *Field_Metadata;
+    property: *Property_Binding;
+    property_owner: *void;
+    collections: []Live_Collection;
 }
 
-capture_reflection :: (object: *$T) -> Reflection {
+capture_reflection :: (object: *$T, options: Reflection_Options = .{}) -> Reflection {
     entries :: #run collect(type_info(T));
-    root: Any;
-    root.type = type_info(T);
-    root.value_pointer = object;
-    return .{root, entries};
+    result := create(object, options);
+    result.entries = entries;
+    return result;
 }
 
 reflection_value :: (reflection: Reflection, node_index: int) -> Any {
     result: Any;
-    if !reflection.root.value_pointer || node_index < 0 || node_index >= reflection.entries.count {
+    if (!(reflection.options.access & .Read) || !reflection.root.value_pointer ||
+        node_index < 0 || node_index >= reflection.entries.count) {
         return result;
     }
     entry := reflection.entries[node_index];
@@ -199,7 +207,7 @@ find_enum :: inline ($$info: *Type_Info) -> *Enum_Metadata {
     }
 }
 
-// A constant Type chooses the return type; a runtime descriptor needs a tagged reference.
+// Struct/enum calls retain their specialized return types; other types return native type metadata.
 find_reflection :: inline ($T: Type) -> $R
 #modify {
     info := cast(*Type_Info)T;
@@ -210,7 +218,7 @@ find_reflection :: inline ($T: Type) -> $R
         R = *Enum_Metadata;
     }
     else {
-        return false, "find_reflection requires a struct or enum Type.";
+        R = Type_Metadata;
     }
     return true;
 }
@@ -218,21 +226,26 @@ find_reflection :: inline ($T: Type) -> $R
     #if R == *Struct_Metadata {
         return find_struct(type_info(T));
     }
-    else {
+    else #if R == *Enum_Metadata {
         return find_enum(type_info(T));
+    }
+    else {
+        return type_metadata(type_info(T));
     }
 }
 
 find_reflection :: (info: *Type_Info) -> Metadata_Reference {
-    structure := find_struct(info);
-    if structure {
-        return .{kind = .Struct, struct_meta = structure};
+    if !info {
+        return .{};
     }
-    enumeration := find_enum(info);
-    if enumeration {
-        return .{kind = .Enum, enum_meta = enumeration};
+    metadata := type_metadata(info);
+    if metadata.struct_meta {
+        return .{kind = .Struct, struct_meta = metadata.struct_meta, type_meta = metadata};
     }
-    return .{};
+    if metadata.enum_meta {
+        return .{kind = .Enum, enum_meta = metadata.enum_meta, type_meta = metadata};
+    }
+    return .{kind = .Value, type_meta = metadata};
 }
 
 // The Any borrows read-only compiler-emitted storage, including relocated string/type/procedure values.
@@ -508,7 +521,8 @@ array_elements :: (node: *Entry, array: *$T) -> (view: Array_View, success: bool
 }
 
 array_elements_from_any :: (node: *Entry, array: Any) -> (view: Array_View, success: bool) {
-    if !node || !cast(*Type_Info)node.array_meta.element_type || array.type != cast(*Type_Info)node.member_type || !array.value_pointer {
+    if (!node || (cast(*Type_Info)node.member_type).type != .ARRAY ||
+        array.type != cast(*Type_Info)node.member_type || !array.value_pointer) {
         return .{}, false;
     }
     metadata := node.array_meta;
@@ -632,6 +646,7 @@ metadata_type_hash :: (value: Type) -> u32 {
     if info.type == .ENUM {
         return Hash.get_hash((cast(*Type_Info_Enum)info).name);
     }
+    assert(false, "Metadata catalog hashing requires a struct or enum type.");
     return 0;
 }
 
@@ -721,6 +736,8 @@ collect_enum_node :: (enumeration: *Compiler.Code_Enum) -> Enum_Metadata #compil
 
     return .{enum_type = Compiler.get_type(info), fields = fields};
 }
+
+#scope_module
 
 Table_Storage :: struct {
     entries_offset: int;
@@ -820,6 +837,8 @@ collect_table_metadata :: (info: *Type_Info_Struct) -> Table_Metadata #compile_t
                          key_offset = key.offset_in_bytes,
                          value_offset = value.offset_in_bytes}};
 }
+
+#scope_file
 
 parse_member :: (member: Type_Info_Struct_Member, owner_name: string = "") -> Field_Metadata {
     result: Field_Metadata;
