@@ -497,6 +497,7 @@ Live_Collection :: struct {
     container_type: Type;
     element_type: Type;
     key_type: Type;
+    valid: (*void) -> bool;
     count: (*void) -> int;
     at: (*void, int) -> Any;
     key_at: (*void, int) -> Any;
@@ -614,6 +615,9 @@ live_collection :: (view: Reflection) -> *Live_Collection {
     base := live_base_type(view.root.type);
     for *operations: view.collections {
         if cast(*Type_Info)operations.container_type == base {
+            if !operations.valid(view.root.value_pointer) {
+                return null;
+            }
             return operations;
         }
     }
@@ -711,7 +715,7 @@ Live_Collection_Ops :: struct (T: Type) {
     }
 
     describe :: () -> Live_Collection {
-        result := Live_Collection.{container_type = T, element_type = E, count = count, at = at};
+        result := Live_Collection.{container_type = T, element_type = E, valid = valid, count = count, at = at};
         #if IS_TABLE {
             result.key_type = K;
             result.key_at = key_at;
@@ -725,6 +729,31 @@ Live_Collection_Ops :: struct (T: Type) {
             result.remove_at = remove_at;
         }
         return result;
+    }
+
+    valid :: (raw: *void) -> bool {
+        source := cast(*T)raw;
+        #if IS_TABLE {
+            return (source.count >= 0 && source.allocated >= 0 && source.count <= source.slots_filled &&
+                    source.slots_filled <= source.allocated && source.entries.count == source.allocated &&
+                    (source.allocated == 0 || source.entries.data != null));
+        }
+        else {
+            #if #run type_info(T).array_type == .FIXED {
+                return true;
+            }
+            else {
+                if source.count < 0 || (source.count > 0 && size_of(E) > 0 && !source.data) {
+                    return false;
+                }
+                #if RESIZABLE {
+                    return source.count <= source.allocated;
+                }
+                else {
+                    return true;
+                }
+            }
+        }
     }
 
     count :: (raw: *void) -> int {
