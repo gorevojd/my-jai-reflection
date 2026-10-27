@@ -158,7 +158,7 @@ exposes read-only descendants. To modify it, assign the complete computed proper
 through its setter. This avoids bypassing setters by modifying a temporary child.
 
 `make_method(Owner, name, procedure)` generates a typed invocation wrapper. The
-procedure must be concrete and callable at runtime, with `*Owner` as its first
+procedure must have a concrete, fixed signature callable at runtime, with `*Owner` as its first
 argument. Methods are explicitly bound; a procedure constant is not automatically
 exposed for invocation. `get_method` and `get_method_count` inspect bindings.
 
