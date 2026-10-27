@@ -230,6 +230,11 @@ collect_structs :: (roots: ..*Type_Info) -> []Struct_Metadata #compile_time {
             array_add(*pending, (cast(*Type_Info_Array)info).element_type);
         }
         else if info.type == .STRUCT {
+            if is_standard_table(info) || is_counted_table(info) {
+                table := collect_table_metadata(cast(*Type_Info_Struct)info);
+                array_add(*pending, cast(*Type_Info)table.value_type);
+                continue;
+            }
             metadata := collect_struct(cast(*Type_Info_Struct)info);
             array_add(*result, metadata);
             for field: metadata.fields {
