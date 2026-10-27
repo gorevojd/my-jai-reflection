@@ -6,7 +6,7 @@
 
 #scope_export
 
-// TODO: Study what is going on here
+// Drain all type registrations before baking the shared catalog and its immutable lookup indexes.
 
 build_file :: (path: string, workspace: Workspace) {
     compiler_begin_intercept(workspace);
@@ -27,13 +27,13 @@ build_file :: (path: string, workspace: Workspace) {
             checked := cast(*Message_Typechecked)message;
             for item: checked.structs {
                 node := item.expression;
-                if !node.defined_type || !has_note(node.notes, "ReflectStruct") || already_seen(*seen, node.defined_type) {
+                if !node.defined_type || already_seen(*seen, node.defined_type) {
                     continue;
                 }
-                assert(!catalog_finished, "Reflection: marked struct appeared after the catalog was baked.");
+                assert(!catalog_finished, "Reflection: struct appeared after the catalog was baked.");
                 // Compiler-owned pointers are used only by #run in this same compiler process.
                 // The target workspace converts its own Type_Info to relocatable Type values before baking.
-                source := sprint(STRUCT_REGISTRATION, cast(u64)node.defined_type);
+                source := sprint(STRUCT_REGISTRATION, cast(u64)node.defined_type, is_generated_context(node));
                 add_build_string(source, workspace);
                 registrations_added = true;
             }
@@ -49,10 +49,10 @@ build_file :: (path: string, workspace: Workspace) {
                 }
             }
             for node: enumerations {
-                if !node.external_type || !has_note(node.notes, "ReflectEnum") || already_seen(*seen, node.external_type) {
+                if !node.external_type || already_seen(*seen, node.external_type) {
                     continue;
                 }
-                assert(!catalog_finished, "Reflection: marked enum appeared after the catalog was baked.");
+                assert(!catalog_finished, "Reflection: enum appeared after the catalog was baked.");
                 source := sprint(ENUM_REGISTRATION, cast(u64)node);
                 add_build_string(source, workspace);
                 registrations_added = true;
@@ -87,7 +87,7 @@ build_file :: (path: string, workspace: Workspace) {
 STRUCT_REGISTRATION :: #string END_REGISTRATION
 #run {
     R :: #import "MyReflection";
-    R.register_reflected_struct(cast(*Type_Info_Struct)%);
+    R.register_reflected_struct(cast(*Type_Info_Struct)%, %);
 }
 END_REGISTRATION
 
@@ -99,13 +99,27 @@ ENUM_REGISTRATION :: #string END_REGISTRATION
 }
 END_REGISTRATION
 
-has_note :: (notes: []*Code_Note, text: string) -> bool {
-    for note: notes {
-        if note.text == text {
-            return true;
+is_generated_context :: (node: *Code_Struct) -> bool {
+    if (!node.enclosing_load || !node.enclosing_load.enclosing_import ||
+        node.enclosing_load.enclosing_import.module_type != .RUNTIME_SUPPORT) {
+        return false;
+    }
+    PREFIX :: "Context";
+    name := node.defined_type.name;
+    if name.count <= PREFIX.count {
+        return false;
+    }
+    for character, index: PREFIX {
+        if name[index] != character {
+            return false;
         }
     }
-    return false;
+    for index: PREFIX.count..name.count - 1 {
+        if name[index] < #char "0" || name[index] > #char "9" {
+            return false;
+        }
+    }
+    return true;
 }
 
 already_seen :: (seen: *[..]*Type_Info, info: *Type_Info) -> bool {

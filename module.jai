@@ -1,5 +1,5 @@
 // Build with #run collect(type_info(My_Struct)). Returned strings and arrays are baked into the executable.
-// Mark structs @ReflectStruct and enums @ReflectEnum. The build hook gathers marked types automatically.
+// The build hook gathers all typechecked structs and enums automatically.
 #scope_file
 
 #import "Basic";
@@ -8,6 +8,7 @@ Strings :: #import "string_utils";
 Compiler :: #import "Compiler";
 Tables :: #import "Hash_Table";
 TablesWithCollisions :: #import "Hash_Table"(true);
+Hash :: #import "Hash";
 
 #scope_export
 
@@ -40,6 +41,16 @@ Struct_Metadata :: struct {
 
     // Shares fields when every field is enabled; otherwise this is the prefiltered subset.
     serialized_fields: []Field_Metadata;
+
+    // Constants live in Type_Info constant storage, never at offsets in an object.
+    constants: []Constant_Metadata;
+}
+
+Constant_Metadata :: struct {
+    name: string;
+    member_type: Type;
+    storage_offset: int = -1;
+    notes: []string;
 }
 
 Table_Metadata :: struct {
@@ -103,6 +114,43 @@ Enum_Metadata :: struct {
     fields: []Enum_Field_Metadata;
 }
 
+Reflection_Kind :: enum {
+    None;
+    Struct;
+    Enum;
+}
+
+Metadata_Reference :: struct {
+    kind: Reflection_Kind;
+    struct_meta: *Struct_Metadata;
+    enum_meta: *Enum_Metadata;
+}
+
+// Borrows one object and shared baked entries. Reacquire after moving/reloading the object.
+Reflection :: struct {
+    root: Any;
+    entries: []Entry;
+}
+
+capture_reflection :: (object: *$T) -> Reflection {
+    entries :: #run collect(type_info(T));
+    root: Any;
+    root.type = type_info(T);
+    root.value_pointer = object;
+    return .{root, entries};
+}
+
+reflection_value :: (reflection: Reflection, node_index: int) -> Any {
+    result: Any;
+    if !reflection.root.value_pointer || node_index < 0 || node_index >= reflection.entries.count {
+        return result;
+    }
+    entry := reflection.entries[node_index];
+    result.type = cast(*Type_Info)entry.member_type;
+    result.value_pointer = cast(*u8)reflection.root.value_pointer + entry.offset;
+    return result;
+}
+
 // These catalogs are baked by reflection_build.jai; no application type list is required.
 reflected_structs :: () -> []Struct_Metadata {
     return reflected_catalog.structures;
@@ -112,41 +160,115 @@ reflected_enums :: () -> []Enum_Metadata {
     return reflected_catalog.enums;
 }
 
-find_struct :: (info: *Type_Info) -> *Struct_Metadata {
-    for *metadata: reflected_catalog.structures {
-        if cast(*Type_Info)metadata.struct_type == info {
-            return metadata;
+find_struct :: inline ($$info: *Type_Info) -> *Struct_Metadata {
+    #if is_constant(info) {
+        // Bake the index, not a compiler-process address into the catalog's backing array.
+        index :: #run lookup_struct_index(info);
+        #if index < 0 {
+            return null;
+        }
+        else {
+            return *reflected_catalog.structures[index];
         }
     }
-    return null;
+    else {
+        return lookup_struct(info);
+    }
 }
 
-find_enum :: (enum_type: Type) -> *Enum_Metadata {
+find_struct :: inline ($$struct_type: Type) -> *Struct_Metadata {
+    return find_struct(cast(*Type_Info)struct_type);
+}
+
+find_enum :: inline ($$enum_type: Type) -> *Enum_Metadata {
     return find_enum(cast(*Type_Info)enum_type);
 }
 
-find_enum :: (info: *Type_Info) -> *Enum_Metadata {
-    for *metadata: reflected_catalog.enums {
-        if cast(*Type_Info)metadata.enum_type == info {
-            return metadata;
+find_enum :: inline ($$info: *Type_Info) -> *Enum_Metadata {
+    #if is_constant(info) {
+        index :: #run lookup_enum_index(info);
+        #if index < 0 {
+            return null;
+        }
+        else {
+            return *reflected_catalog.enums[index];
         }
     }
-    return null;
+    else {
+        return lookup_enum(info);
+    }
+}
+
+// A constant Type chooses the return type; a runtime descriptor needs a tagged reference.
+find_reflection :: inline ($T: Type) -> $R
+#modify {
+    info := cast(*Type_Info)T;
+    if info.type == .STRUCT {
+        R = *Struct_Metadata;
+    }
+    else if info.type == .ENUM {
+        R = *Enum_Metadata;
+    }
+    else {
+        return false, "find_reflection requires a struct or enum Type.";
+    }
+    return true;
+}
+{
+    #if R == *Struct_Metadata {
+        return find_struct(type_info(T));
+    }
+    else {
+        return find_enum(type_info(T));
+    }
+}
+
+find_reflection :: (info: *Type_Info) -> Metadata_Reference {
+    structure := find_struct(info);
+    if structure {
+        return .{kind = .Struct, struct_meta = structure};
+    }
+    enumeration := find_enum(info);
+    if enumeration {
+        return .{kind = .Enum, enum_meta = enumeration};
+    }
+    return .{};
+}
+
+// The Any borrows read-only compiler-emitted storage, including relocated string/type/procedure values.
+constant_value :: (metadata: *Struct_Metadata, constant_index: int) -> Any {
+    result: Any;
+    if !metadata || constant_index < 0 || constant_index >= metadata.constants.count {
+        return result;
+    }
+    constant := metadata.constants[constant_index];
+    if constant.storage_offset < 0 {
+        return result;
+    }
+    info := cast(*Type_Info_Struct)metadata.struct_type;
+    result.type = cast(*Type_Info)constant.member_type;
+    result.value_pointer = info.constant_storage.data + constant.storage_offset;
+    return result;
+}
+
+// The name form selects the first addressable declaration; use the index for overloaded procedures.
+constant_value :: (metadata: *Struct_Metadata, name: string) -> Any {
+    result: Any;
+    if !metadata {
+        return result;
+    }
+    for constant, index: metadata.constants {
+        if constant.name != name || constant.storage_offset < 0 {
+            continue;
+        }
+        return constant_value(metadata, index);
+    }
+    return result;
 }
 
 // Baked field selection; runtime serializers consume fields without scanning source notes.
 collect_struct :: (info: *Type_Info_Struct) -> Struct_Metadata #compile_time {
-    result := Struct_Metadata.{struct_type = Compiler.get_type(info), name = info.name};
-
-    for note: info.notes {
-        if note == "ReflectStruct" {
-            result.is_serialized = true;
-        }
-    }
-
-    if !result.is_serialized {
-        return result;
-    }
+    result := Struct_Metadata.{struct_type = Compiler.get_type(info), name = info.name, is_serialized = true};
 
     SERIALIZATION_DEFAULT_PREFIX :: "SerializeFieldsByDefault=";
     for note: info.notes {
@@ -164,8 +286,13 @@ collect_struct :: (info: *Type_Info_Struct) -> Struct_Metadata #compile_time {
 
     fields: [..]Field_Metadata;
     serialized_fields: [..]Field_Metadata;
+    constants: [..]Constant_Metadata;
     for member: info.members {
         if member.flags & .CONSTANT {
+            array_add(*constants, Constant_Metadata.{name = member.name,
+                                                    member_type = Compiler.get_type(member.type),
+                                                    storage_offset = member.offset_into_constant_storage,
+                                                    notes = member.notes});
             continue;
         }
 
@@ -198,6 +325,7 @@ collect_struct :: (info: *Type_Info_Struct) -> Struct_Metadata #compile_time {
 
     result.fields = fields;
     result.serialized_fields = ifx fields.count == serialized_fields.count then fields else serialized_fields;
+    result.constants = constants;
     return result;
 }
 
@@ -316,7 +444,7 @@ table_entries_from_any :: (node: *Entry, table: Any, rows: *[..]Table_Entry) -> 
     data := cast(*u8)table.value_pointer;
     // Array views have the same count/data header regardless of element type; count is the number of slots.
     slots := (cast(*[]u8)(data + storage.entries_offset)).*;
-    array_reset(rows);
+    array_reset_keeping_memory(rows);
     for index: 0..slots.count - 1 {
         slot := slots.data + index * storage.entry_size;
         hash := (cast(*u32)(slot + storage.hash_offset)).*;
@@ -365,7 +493,8 @@ resolve_table_key :: (table: *$T, reference: *Table_Key_Reference(table.Key_Type
     }
     #if #run is_counted_table(type_info(T)) {
         return TablesWithCollisions.table_find_pointer(table, reference.key);
-    } else {
+    }
+    else {
         return Tables.table_find_pointer(table, reference.key);
     }
 }
@@ -387,7 +516,8 @@ array_elements_from_any :: (node: *Entry, array: Any) -> (view: Array_View, succ
     if metadata.array_type == .FIXED {
         result.count = metadata.fixed_count;
         result.data = cast(*u8)array.value_pointer;
-    } else {
+    }
+    else {
         // Views and resizable arrays share the leading count/data header. Read count, never capacity.
         source := (cast(*[]u8)array.value_pointer).*;
         result.count = source.count;
@@ -423,9 +553,6 @@ array_element_at :: (node: *Entry, array: *$T, index: int) -> Any {
 collect :: (info: *Type_Info, leaf_types: []*Type_Info = .[]) -> []Entry #compile_time {
     entries: [..]Entry;
     root := make_entry(info);
-    if info.type == .STRUCT && root.table_meta.storage.entry_size == 0 && !root.struct_meta.is_serialized {
-        return .[];
-    }
     array_add(*entries, root);
     // The growing array is also the queue. Appending a parent's direct children preserves BFS order.
     cursor: int;
@@ -456,7 +583,11 @@ collect :: (info: *Type_Info, leaf_types: []*Type_Info = .[]) -> []Entry #compil
 
 #scope_module
 
-register_reflected_struct :: (info: *Type_Info_Struct) #compile_time {
+register_reflected_struct :: (info: *Type_Info_Struct, generated_context: bool) #compile_time {
+    if generated_context {
+        pending_catalog.context_info = info;
+        return;
+    }
     array_add(*pending_catalog.structures, collect_struct(info));
 }
 
@@ -465,7 +596,22 @@ register_reflected_enum :: (node: *Compiler.Code_Enum) #compile_time {
 }
 
 finish_catalog :: () -> Metadata_Catalog #compile_time {
-    return .{structures = pending_catalog.structures, enums = pending_catalog.enums};
+    // Jai relocates earlier generated Context versions to the final descriptor when baking.
+    // Collect only the latest version so the catalog has one record and the final name/fields.
+    if pending_catalog.context_info {
+        array_add(*pending_catalog.structures, collect_struct(pending_catalog.context_info));
+    }
+    result := Metadata_Catalog.{structures = pending_catalog.structures, enums = pending_catalog.enums};
+    for metadata, index: result.structures {
+        Tables.table_add(*result.struct_index, metadata.struct_type, index);
+    }
+    for metadata, index: result.enums {
+        Tables.table_add(*result.enum_index, metadata.enum_type, index);
+    }
+    // Lookups never mutate or release these baked tables; no compiler allocator is needed at runtime.
+    result.struct_index.allocator = .{};
+    result.enum_index.allocator = .{};
+    return result;
 }
 
 #scope_file
@@ -473,28 +619,69 @@ finish_catalog :: () -> Metadata_Catalog #compile_time {
 Metadata_Catalog :: struct {
     structures: []Struct_Metadata;
     enums: []Enum_Metadata;
+    struct_index: Tables.Table(Type, int, metadata_type_hash);
+    enum_index: Tables.Table(Type, int, metadata_type_hash);
+}
+
+// Pointer addresses change when baking. Names give stable hashes; Type identity resolves collisions.
+metadata_type_hash :: (value: Type) -> u32 {
+    info := cast(*Type_Info)value;
+    if info.type == .STRUCT {
+        return Hash.get_hash((cast(*Type_Info_Struct)info).name);
+    }
+    if info.type == .ENUM {
+        return Hash.get_hash((cast(*Type_Info_Enum)info).name);
+    }
+    return 0;
+}
+
+lookup_struct :: (info: *Type_Info) -> *Struct_Metadata {
+    index := lookup_struct_index(info);
+    if index < 0 {
+        return null;
+    }
+    return *reflected_catalog.structures[index];
+}
+
+lookup_struct_index :: (info: *Type_Info) -> int {
+    if !info || info.type != .STRUCT {
+        return -1;
+    }
+    index := Tables.table_find_pointer(*reflected_catalog.struct_index, (cast(*Type)*info).*);
+    if !index {
+        return -1;
+    }
+    return index.*;
+}
+
+lookup_enum :: (info: *Type_Info) -> *Enum_Metadata {
+    index := lookup_enum_index(info);
+    if index < 0 {
+        return null;
+    }
+    return *reflected_catalog.enums[index];
+}
+
+lookup_enum_index :: (info: *Type_Info) -> int {
+    if !info || info.type != .ENUM {
+        return -1;
+    }
+    index := Tables.table_find_pointer(*reflected_catalog.enum_index, (cast(*Type)*info).*);
+    if !index {
+        return -1;
+    }
+    return index.*;
 }
 
 Pending_Catalog :: struct {
     structures: [..]Struct_Metadata;
     enums: [..]Enum_Metadata;
+    context_info: *Type_Info_Struct;
 }
 
 pending_catalog: Pending_Catalog;
 
 collect_enum_node :: (enumeration: *Compiler.Code_Enum) -> Enum_Metadata #compile_time {
-    enabled: bool;
-
-    for note: enumeration.notes {
-        if note.text == "ReflectEnum" {
-            enabled = true;
-        }
-    }
-
-    if !enabled {
-        return .{};
-    }
-
     info := enumeration.external_type;
     assert(info != null, "Enum metadata: the build hook requires a typechecked enum declaration.");
 
@@ -663,12 +850,14 @@ parse_member :: (member: Type_Info_Struct_Member, owner_name: string = "") -> Fi
                 }
             }
             result.groups = groups;
-        } else {
+        }
+        else {
             limit := parse_limit(value, member.type, owner_name, member.name, key);
             if kind == .Min {
                 result.range.has_min = true;
                 result.range.minimum = limit;
-            } else {
+            }
+            else {
                 result.range.has_max = true;
                 result.range.maximum = limit;
             }
@@ -827,7 +1016,8 @@ integer_magnitude :: (text: string) -> (magnitude: u64, negative: bool, valid: b
 
         if ch == #char "0" {
             trailing_zeros += 1;
-        } else {
+        }
+        else {
             trailing_zeros = 0;
             nonzero = true;
         }
