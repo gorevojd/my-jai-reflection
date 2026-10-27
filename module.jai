@@ -30,10 +30,14 @@ Field_Metadata :: struct {
 Struct_Metadata :: struct {
     struct_type: Type;
     name: string;
+
     is_serialized: bool;
+
     serialize_fields_by_default: bool = true;
+
     // Reflected fields include fields whose default serialization is disabled.
     fields: []Field_Metadata;
+
     // Shares fields when every field is enabled; otherwise this is the prefiltered subset.
     serialized_fields: []Field_Metadata;
 }
@@ -202,6 +206,7 @@ collect_structs :: (roots: ..*Type_Info) -> []Struct_Metadata #compile_time {
     for roots {
         array_add(*pending, it);
     }
+
     seen: [..]*Type_Info;
     result: [..]Struct_Metadata;
     cursor: int;
@@ -215,9 +220,11 @@ collect_structs :: (roots: ..*Type_Info) -> []Struct_Metadata #compile_time {
                 break;
             }
         }
+
         if duplicate {
             continue;
         }
+
         array_add(*seen, info);
         if info.type == .ARRAY {
             array_add(*pending, (cast(*Type_Info_Array)info).element_type);
@@ -230,6 +237,7 @@ collect_structs :: (roots: ..*Type_Info) -> []Struct_Metadata #compile_time {
             }
         }
     }
+
     return result;
 }
 
@@ -278,10 +286,12 @@ parent :: (entries: []Entry, node_index: int) -> *Entry {
     if node_index < 0 || node_index >= entries.count {
         return null;
     }
+
     parent_index := entries[node_index].parent_index;
     if parent_index < 0 || parent_index >= entries.count {
         return null;
     }
+
     return *entries[parent_index];
 }
 
@@ -530,6 +540,7 @@ is_standard_table :: (info: *Type_Info) -> bool #compile_time {
     if info.type != .STRUCT {
         return false;
     }
+
     source := (cast(*Type_Info_Struct)info).polymorph_source_struct;
     return source == type_info(Tables.Table(int, int)).polymorph_source_struct;
 }
@@ -538,6 +549,7 @@ is_counted_table :: (info: *Type_Info) -> bool #compile_time {
     if info.type != .STRUCT {
         return false;
     }
+
     source := (cast(*Type_Info_Struct)info).polymorph_source_struct;
     return source == type_info(TablesWithCollisions.Table(int, int)).polymorph_source_struct;
 }
@@ -546,11 +558,13 @@ primitive_key_info :: (info: *Type_Info) -> *Type_Info #compile_time {
     while info.type == .VARIANT {
         info = (cast(*Type_Info_Variant)info).variant_of;
     }
+
     return info;
 }
 
 is_primitive_key :: (info: *Type_Info) -> bool #compile_time {
     info = primitive_key_info(info);
+
     return (info.type == .STRING || info.type == .INTEGER || info.type == .ENUM ||
             info.type == .FLOAT || info.type == .BOOL);
 }
@@ -788,6 +802,7 @@ integer_magnitude :: (text: string) -> (magnitude: u64, negative: bool, valid: b
     if negative || text[0] == #char "+" {
         cursor += 1;
     }
+
     first_digit := cursor;
     digits, fractional_digits, trailing_zeros: int;
     fraction: bool;
@@ -799,10 +814,12 @@ integer_magnitude :: (text: string) -> (magnitude: u64, negative: bool, valid: b
             fraction = true;
             continue;
         }
+
         digits += 1;
         if fraction {
             fractional_digits += 1;
         }
+
         if ch == #char "0" {
             trailing_zeros += 1;
         } else {
@@ -810,9 +827,11 @@ integer_magnitude :: (text: string) -> (magnitude: u64, negative: bool, valid: b
             nonzero = true;
         }
     }
+
     if !nonzero {
         return 0, negative, true;
     }
+
     exponent: int;
     if cursor < text.count {
         cursor += 1;
@@ -832,11 +851,13 @@ integer_magnitude :: (text: string) -> (magnitude: u64, negative: bool, valid: b
             exponent = -exponent;
         }
     }
+
     shift := exponent - fractional_digits;
     removed := ifx shift < 0 then -shift else 0;
     if removed > trailing_zeros {
         return 0, negative, false;
     }
+
     remaining := digits - removed;
     cursor = first_digit;
     for index: 0..remaining - 1 {
@@ -850,6 +871,7 @@ integer_magnitude :: (text: string) -> (magnitude: u64, negative: bool, valid: b
         }
         magnitude = magnitude * 10 + digit;
     }
+
     while shift > 0 {
         if magnitude > Math.U64_MAX / 10 {
             return 0, negative, false;
@@ -857,12 +879,14 @@ integer_magnitude :: (text: string) -> (magnitude: u64, negative: bool, valid: b
         magnitude *= 10;
         shift -= 1;
     }
+
     return magnitude, negative, true;
 }
 
 parse_limit :: (text: string, info: *Type_Info, owner: string, field: string, key: string) -> float64 {
     assert(info.type == .INTEGER || info.type == .FLOAT, "Metadata %.%: % requires a numeric member.", owner, field, key);
     assert(valid_number(text), "Metadata %.%: % '%' must be a complete decimal number.", owner, field, key, text);
+
     value, success, remainder := string_to_float64(text);
     assert(success && remainder.count == 0 && Math.is_finite(value), "Metadata %.%: % '%' must be finite.", owner, field, key, text);
     if info.type == .FLOAT {
@@ -875,6 +899,7 @@ parse_limit :: (text: string, info: *Type_Info, owner: string, field: string, ke
         }
         return value;
     }
+
     integer := cast(*Type_Info_Integer)info;
     magnitude, negative, integral := integer_magnitude(text);
     assert(integral, "Metadata %.%: % '%' must be an integer within its member's range.", owner, field, key, text);
@@ -908,10 +933,12 @@ decimal_is_zero :: (text: string) -> bool {
         if ch == #char "e" || ch == #char "E" {
             break;
         }
+
         if ch >= #char "1" && ch <= #char "9" {
             return false;
         }
     }
+
     return true;
 }
 
