@@ -4,7 +4,7 @@
 
 #import "Basic";
 Math :: #import "MyMath";
-Strings :: #import "string_utils";
+Strings :: #import "MyBasic";
 Compiler :: #import "Compiler";
 Tables :: #import "Hash_Table";
 TablesWithCollisions :: #import "Hash_Table"(true);
