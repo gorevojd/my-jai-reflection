@@ -85,9 +85,19 @@ build_file :: (path: string, workspace: Workspace) {
 #scope_file
 
 STRUCT_REGISTRATION :: #string END_REGISTRATION
-#run {
-    R :: #import "MyReflection";
-    R.register_reflected_struct(cast(*Type_Info_Struct)%, %);
+#scope_file
+R :: #import "MyReflection";
+C :: #import "Compiler";
+INFO_ADDRESS :: %;
+GENERATED_CONTEXT :: %;
+#if #run R.has_custom_serialization_methods(cast(*Type_Info_Struct)INFO_ADDRESS) {
+    Registered_Type :: #run C.get_type(cast(*Type_Info_Struct)INFO_ADDRESS);
+    #run R.register_reflected_struct(type_info(Registered_Type), GENERATED_CONTEXT,
+                                    R.Custom_Serialization(Registered_Type).encode,
+                                    R.Custom_Serialization(Registered_Type).decode);
+}
+else {
+    #run R.register_reflected_struct(cast(*Type_Info_Struct)INFO_ADDRESS, GENERATED_CONTEXT);
 }
 END_REGISTRATION
 

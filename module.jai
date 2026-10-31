@@ -18,6 +18,9 @@ Numeric_Range :: struct {
     minimum, maximum: float64;
 }
 
+Custom_Serialize_Callback :: #type (data: *u8) -> Strings.Binary, bool;
+Custom_Deserialize_Callback :: #type (binary: Strings.Binary, data: *u8) -> bool;
+
 Field_Metadata :: struct {
     name: string;
     offset: int;
@@ -30,6 +33,10 @@ Field_Metadata :: struct {
 }
 
 Struct_Metadata :: struct {
+    custom_serialization: bool;
+    is_hash_table: bool;
+    custom_serialize: Custom_Serialize_Callback;
+    custom_deserialize: Custom_Deserialize_Callback;
     struct_type: Type;
     name: string;
 
@@ -283,6 +290,14 @@ constant_value :: (metadata: *Struct_Metadata, name: string) -> Any {
 collect_struct :: (info: *Type_Info_Struct) -> Struct_Metadata #compile_time {
     result := Struct_Metadata.{struct_type = Compiler.get_type(info), name = info.name, is_serialized = true};
 
+    result.is_hash_table = is_standard_table(info) || is_counted_table(info);
+    for note: info.notes {
+        if note == "CustomSerialize" {
+            result.custom_serialization = true;
+            assert(has_custom_serialization_methods(info),
+                   "CustomSerialize % requires serialize(T) -> Binary, bool and deserialize(Binary) -> T, bool.", info.name);
+        }
+    }
     SERIALIZATION_DEFAULT_PREFIX :: "SerializeFieldsByDefault=";
     for note: info.notes {
         if note == "SerializeFieldsByDefault" || note == "SerializeFieldsByDefault=true" {
@@ -597,12 +612,65 @@ collect :: (info: *Type_Info, leaf_types: []*Type_Info = .[]) -> []Entry #compil
 
 #scope_module
 
-register_reflected_struct :: (info: *Type_Info_Struct, generated_context: bool) #compile_time {
+has_custom_serialization_methods :: (info: *Type_Info_Struct) -> bool #compile_time {
+    marked: bool;
+    for note: info.notes {
+        if note == "CustomSerialize" {
+            marked = true;
+        }
+    }
+    if !marked {
+        return false;
+    }
+    encode, decode: bool;
+    for member: info.members {
+        if !(member.flags & .CONSTANT) || member.type.type != .PROCEDURE {
+            continue;
+        }
+        procedure := cast(*Type_Info_Procedure)member.type;
+        if procedure.argument_types.count != 1 || procedure.return_types.count != 2 {
+            continue;
+        }
+        if procedure.return_types[1] != type_info(bool) {
+            continue;
+        }
+        if member.name == "serialize" {
+            encode = procedure.argument_types[0] == info && procedure.return_types[0] == type_info(Strings.Binary);
+        }
+        else if member.name == "deserialize" {
+            decode = procedure.argument_types[0] == type_info(Strings.Binary) && procedure.return_types[0] == info;
+        }
+    }
+    return encode && decode;
+}
+
+Custom_Serialization :: struct (T: Type) {
+    encode :: (data: *u8) -> Strings.Binary, bool {
+        binary, success := T.serialize((cast(*T)data).*);
+        return binary, success;
+    }
+    decode :: (binary: Strings.Binary, data: *u8) -> bool {
+        value, success := T.deserialize(binary);
+        if success {
+            (cast(*T)data).* = value;
+        }
+        return success;
+    }
+}
+
+register_reflected_struct :: (info: *Type_Info_Struct,
+                             generated_context: bool,
+                             encode: Custom_Serialize_Callback = null,
+                             decode: Custom_Deserialize_Callback = null) #compile_time
+{
     if generated_context {
         pending_catalog.context_info = info;
         return;
     }
-    array_add(*pending_catalog.structures, collect_struct(info));
+    metadata := collect_struct(info);
+    metadata.custom_serialize = encode;
+    metadata.custom_deserialize = decode;
+    array_add(*pending_catalog.structures, metadata);
 }
 
 register_reflected_enum :: (node: *Compiler.Code_Enum) #compile_time {
