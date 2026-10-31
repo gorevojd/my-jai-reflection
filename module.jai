@@ -35,6 +35,7 @@ Field_Metadata :: struct {
 
 Struct_Metadata :: struct {
     custom_serialization: bool;
+    restrict_serialization: bool;
     is_hash_table: bool;
     custom_size: Custom_Size_Callback;
     custom_serialize: Custom_Serialize_Callback;
@@ -299,6 +300,9 @@ collect_struct :: (info: *Type_Info_Struct) -> Struct_Metadata #compile_time {
             assert(has_custom_serialization_methods(info),
                    "CustomSerialize % requires get_serialization_size(T), serialize(BinaryView, T), deserialize(BinaryView, *T), all returning s64.",
                    info.name);
+        }
+        else if note == "RestrictSerialization" {
+            result.restrict_serialization = true;
         }
     }
     SERIALIZATION_DEFAULT_PREFIX :: "SerializeFieldsByDefault=";
