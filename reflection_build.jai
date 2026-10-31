@@ -93,6 +93,7 @@ GENERATED_CONTEXT :: %;
 #if #run R.has_custom_serialization_methods(cast(*Type_Info_Struct)INFO_ADDRESS) {
     Registered_Type :: #run C.get_type(cast(*Type_Info_Struct)INFO_ADDRESS);
     #run R.register_reflected_struct(type_info(Registered_Type), GENERATED_CONTEXT,
+                                    R.Custom_Serialization(Registered_Type).measure,
                                     R.Custom_Serialization(Registered_Type).encode,
                                     R.Custom_Serialization(Registered_Type).decode);
 }

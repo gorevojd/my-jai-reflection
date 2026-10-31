@@ -18,8 +18,9 @@ Numeric_Range :: struct {
     minimum, maximum: float64;
 }
 
-Custom_Serialize_Callback :: #type (data: *u8) -> Strings.Binary, bool;
-Custom_Deserialize_Callback :: #type (binary: Strings.Binary, data: *u8) -> bool;
+Custom_Size_Callback :: #type (data: *u8) -> s64;
+Custom_Serialize_Callback :: #type (destination: Strings.BinaryView, data: *u8) -> s64;
+Custom_Deserialize_Callback :: #type (source: Strings.BinaryView, data: *u8) -> s64;
 
 Field_Metadata :: struct {
     name: string;
@@ -35,6 +36,7 @@ Field_Metadata :: struct {
 Struct_Metadata :: struct {
     custom_serialization: bool;
     is_hash_table: bool;
+    custom_size: Custom_Size_Callback;
     custom_serialize: Custom_Serialize_Callback;
     custom_deserialize: Custom_Deserialize_Callback;
     struct_type: Type;
@@ -295,7 +297,8 @@ collect_struct :: (info: *Type_Info_Struct) -> Struct_Metadata #compile_time {
         if note == "CustomSerialize" {
             result.custom_serialization = true;
             assert(has_custom_serialization_methods(info),
-                   "CustomSerialize % requires serialize(T) -> Binary, bool and deserialize(Binary) -> T, bool.", info.name);
+                   "CustomSerialize % requires get_serialization_size(T), serialize(BinaryView, T), deserialize(BinaryView, *T), all returning s64.",
+                   info.name);
         }
     }
     SERIALIZATION_DEFAULT_PREFIX :: "SerializeFieldsByDefault=";
@@ -622,52 +625,64 @@ has_custom_serialization_methods :: (info: *Type_Info_Struct) -> bool #compile_t
     if !marked {
         return false;
     }
-    encode, decode: bool;
+    measure, encode, decode: bool;
     for member: info.members {
         if !(member.flags & .CONSTANT) || member.type.type != .PROCEDURE {
             continue;
         }
         procedure := cast(*Type_Info_Procedure)member.type;
-        if procedure.argument_types.count != 1 || procedure.return_types.count != 2 {
+        if procedure.return_types.count != 1 || procedure.return_types[0] != type_info(s64) {
             continue;
         }
-        if procedure.return_types[1] != type_info(bool) {
-            continue;
+        if member.name == "get_serialization_size" && procedure.argument_types.count == 1 {
+            measure = procedure.argument_types[0] == info;
         }
-        if member.name == "serialize" {
-            encode = procedure.argument_types[0] == info && procedure.return_types[0] == type_info(Strings.Binary);
-        }
-        else if member.name == "deserialize" {
-            decode = procedure.argument_types[0] == type_info(Strings.Binary) && procedure.return_types[0] == info;
+        else if procedure.argument_types.count == 2 && procedure.argument_types[0] == type_info(Strings.BinaryView) {
+            if member.name == "serialize" {
+                encode = procedure.argument_types[1] == info;
+            }
+            else if member.name == "deserialize" {
+                destination := procedure.argument_types[1];
+                decode = destination.type == .POINTER && (cast(*Type_Info_Pointer)destination).pointer_to == info;
+            }
         }
     }
-    return encode && decode;
+    return measure && encode && decode;
 }
 
 Custom_Serialization :: struct (T: Type) {
-    encode :: (data: *u8) -> Strings.Binary, bool {
-        binary, success := T.serialize((cast(*T)data).*);
-        return binary, success;
+    measure :: (data: *u8) -> s64 {
+        return T.get_serialization_size((cast(*T)data).*);
     }
-    decode :: (binary: Strings.Binary, data: *u8) -> bool {
-        value, success := T.deserialize(binary);
-        if success {
-            (cast(*T)data).* = value;
-        }
-        return success;
+    encode :: (destination: Strings.BinaryView, data: *u8) -> s64 {
+        return T.serialize(destination, (cast(*T)data).*);
+    }
+    decode :: (source: Strings.BinaryView, data: *u8) -> s64 {
+        return T.deserialize(source, cast(*T)data);
     }
 }
 
 register_reflected_struct :: (info: *Type_Info_Struct,
                              generated_context: bool,
+                             measure: Custom_Size_Callback = null,
                              encode: Custom_Serialize_Callback = null,
                              decode: Custom_Deserialize_Callback = null) #compile_time
 {
     if generated_context {
-        pending_catalog.context_info = info;
+        // Injected #run registrations can execute out of order. Context suffixes are compiler version numbers.
+        version: u64;
+        PREFIX :: "Context";
+        for index: PREFIX.count..info.name.count - 1 {
+            version = version * 10 + cast(u64)(info.name[index] - #char "0");
+        }
+        if pending_catalog.context_info == null || version > pending_catalog.context_version {
+            pending_catalog.context_info = info;
+            pending_catalog.context_version = version;
+        }
         return;
     }
     metadata := collect_struct(info);
+    metadata.custom_size = measure;
     metadata.custom_serialize = encode;
     metadata.custom_deserialize = decode;
     array_add(*pending_catalog.structures, metadata);
@@ -757,6 +772,7 @@ lookup_enum_index :: (info: *Type_Info) -> int {
 }
 
 Pending_Catalog :: struct {
+    context_version: u64;
     structures: [..]Struct_Metadata;
     enums: [..]Enum_Metadata;
     context_info: *Type_Info_Struct;
