@@ -98,7 +98,14 @@ GENERATED_CONTEXT :: %;
                                     R.Custom_Serialization(Registered_Type).decode);
 }
 else {
-    #run R.register_reflected_struct(cast(*Type_Info_Struct)INFO_ADDRESS, GENERATED_CONTEXT);
+    #if #run R.has_table_adapter(cast(*Type_Info_Struct)INFO_ADDRESS) {
+        Registered_Type :: #run C.get_type(cast(*Type_Info_Struct)INFO_ADDRESS);
+        #run R.register_reflected_struct(type_info(Registered_Type), GENERATED_CONTEXT,
+                                        table_adapter = R.Typed_Table_Adapter(Registered_Type).metadata());
+    }
+    else {
+        #run R.register_reflected_struct(cast(*Type_Info_Struct)INFO_ADDRESS, GENERATED_CONTEXT);
+    }
 }
 END_REGISTRATION
 

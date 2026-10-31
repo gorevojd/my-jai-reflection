@@ -10,6 +10,7 @@ Tables :: #import "Hash_Table";
 TablesWithCollisions :: #import "Hash_Table"(true);
 Hash :: #import "Hash";
 #load "live_reflection.jai";
+#load "table_adapter.jai";
 
 #scope_export
 
@@ -37,6 +38,7 @@ Struct_Metadata :: struct {
     custom_serialization: bool;
     restrict_serialization: bool;
     is_hash_table: bool;
+    table_adapter: Table_Adapter;
     custom_size: Custom_Size_Callback;
     custom_serialize: Custom_Serialize_Callback;
     custom_deserialize: Custom_Deserialize_Callback;
@@ -670,7 +672,8 @@ register_reflected_struct :: (info: *Type_Info_Struct,
                              generated_context: bool,
                              measure: Custom_Size_Callback = null,
                              encode: Custom_Serialize_Callback = null,
-                             decode: Custom_Deserialize_Callback = null) #compile_time
+                             decode: Custom_Deserialize_Callback = null,
+                             table_adapter: Table_Adapter = .{}) #compile_time
 {
     if generated_context {
         // Injected #run registrations can execute out of order. Context suffixes are compiler version numbers.
@@ -689,6 +692,7 @@ register_reflected_struct :: (info: *Type_Info_Struct,
     metadata.custom_size = measure;
     metadata.custom_serialize = encode;
     metadata.custom_deserialize = decode;
+    metadata.table_adapter = table_adapter;
     array_add(*pending_catalog.structures, metadata);
 }
 
