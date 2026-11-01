@@ -5,6 +5,9 @@ that shared data and generated operations to an existing object. Build through
 `ReflectionBuild.build_file` from `reflection_build.jai`, as in the project's build
 metaprogram. No per-object registration or metadata construction is required.
 
+The complete supported-marker reference is at the beginning of [module.jai](module.jai),
+including scopes, defaults, precedence, custom codec signatures and examples.
+
 ## Values and types
 
 ```jai
@@ -54,6 +57,39 @@ supplement the native information. No primitive-type hash catalog is required.
 `Type_Metadata` for other types. Runtime `find_reflection(info)` returns a
 `Metadata_Reference`: `Struct`, `Enum` or `Value`, with `type_meta` populated.
 Only null descriptors return `None`.
+
+## Registered type identities and serialized sizes
+
+`@Register` on a struct registers its current type name. `@Register="stable_name"`
+uses an explicit, case-sensitive name instead. Duplicate names fail compilation
+and identify both conflicting declarations. Choose an explicit name when saved
+data must survive a source-level type rename. Concrete generic instances must
+also have unique registered names.
+
+```jai
+Enemy_Settings :: struct @Register="game.enemy_settings" {
+    health: u32;
+}
+
+name := R.registered_type_name(Enemy_Settings);
+restored_type, found := R.registered_type(name);
+metadata := R.find_registered_struct(name);
+```
+
+These APIs expose the same registry to configuration readers and binary codecs;
+they do not create objects or automatically add Type support to a configuration
+module. MySerialize uses the name for selected Type fields, never the runtime
+descriptor address. Registration is independent of field selection and
+`@RestrictSerialization`: referencing a Type does not serialize an instance.
+
+The completed catalog also stores `serialized_payload_size` (without the
+struct's own u64 frame prefix), `serialized_size` (including it), and
+`serialized_depth`. These describe MySerialize's format, not `size_of(T)` or
+deserialization allocations. Nested frame prefixes and array counts are included;
+padding and excluded fields are not. A size of -1 means value-dependent or
+unsupported, including custom codecs, unions and restricted types. MySerialize
+uses constant sizes during measurement while preserving the existing wire format
+and depth checks. Runtime writing and reading still visit fields.
 
 ## Properties and collections
 

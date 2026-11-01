@@ -33,7 +33,7 @@ build_file :: (path: string, workspace: Workspace) {
                 assert(!catalog_finished, "Reflection: struct '%' appeared after the catalog was baked.", node.defined_type.name);
                 // Compiler-owned pointers are used only by #run in this same compiler process.
                 // The target workspace converts its own Type_Info to relocatable Type values before baking.
-                source := sprint(STRUCT_REGISTRATION, cast(u64)node.defined_type, is_generated_context(node));
+                source := sprint(STRUCT_REGISTRATION, cast(u64)node.defined_type, cast(u64)node, is_generated_context(node));
                 add_build_string(source, workspace);
                 registrations_added = true;
             }
@@ -89,22 +89,26 @@ STRUCT_REGISTRATION :: #string END_REGISTRATION
 R :: #import "MyReflection";
 C :: #import "Compiler";
 INFO_ADDRESS :: %;
+STRUCT_ADDRESS :: %;
 GENERATED_CONTEXT :: %;
 #if #run R.has_custom_serialization_methods(cast(*Type_Info_Struct)INFO_ADDRESS) {
     Registered_Type :: #run C.get_type(cast(*Type_Info_Struct)INFO_ADDRESS);
     #run R.register_reflected_struct(type_info(Registered_Type), GENERATED_CONTEXT,
                                     R.Custom_Serialization(Registered_Type).measure,
                                     R.Custom_Serialization(Registered_Type).encode,
-                                    R.Custom_Serialization(Registered_Type).decode);
+                                    R.Custom_Serialization(Registered_Type).decode,
+                                    location = C.make_location(cast(*C.Code_Struct)STRUCT_ADDRESS));
 }
 else {
     #if #run R.has_table_adapter(cast(*Type_Info_Struct)INFO_ADDRESS) {
         Registered_Type :: #run C.get_type(cast(*Type_Info_Struct)INFO_ADDRESS);
         #run R.register_reflected_struct(type_info(Registered_Type), GENERATED_CONTEXT,
-                                        table_adapter = R.Typed_Table_Adapter(Registered_Type).metadata());
+                                        table_adapter = R.Typed_Table_Adapter(Registered_Type).metadata(),
+                                        location = C.make_location(cast(*C.Code_Struct)STRUCT_ADDRESS));
     }
     else {
-        #run R.register_reflected_struct(cast(*Type_Info_Struct)INFO_ADDRESS, GENERATED_CONTEXT);
+        #run R.register_reflected_struct(cast(*Type_Info_Struct)INFO_ADDRESS, GENERATED_CONTEXT,
+                                        location = C.make_location(cast(*C.Code_Struct)STRUCT_ADDRESS));
     }
 }
 END_REGISTRATION

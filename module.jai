@@ -1,5 +1,51 @@
 // Build with #run collect(type_info(My_Struct)). Returned strings and arrays are baked into the executable.
 // The build hook gathers all typechecked structs and enums automatically.
+/**
+ * @brief Supported metadata markers (case-sensitive).
+ * @details
+ * Struct markers:
+ * - @SerializeFieldsByDefault / @SerializeFieldsByDefault=true: serialize fields by default (the default without a marker).
+ *   @SerializeFieldsByDefault=false: serialize only fields explicitly marked @SerializeField.
+ * - @CustomSerialize: MySerialize uses the struct's own codec instead of traversing its fields. The build hook requires:
+ *     get_serialization_size :: (value: T) -> s64;
+ *     serialize :: (destination: BinaryView, value: T) -> s64;
+ *     deserialize :: (source: BinaryView, value: *T) -> s64;
+ *   Sizes/counts describe the custom payload without its outer u64 prefix; return -1 on failure.
+ *   Field-selection markers do not control callback code. See MySerialize/module.jai for the complete callback contract.
+ * - @RestrictSerialization: MySerialize rejects serialization/deserialization of this struct's object data.
+ *   Takes precedence over @CustomSerialize. Does not prevent a registered Type from being stored as a type reference.
+ * - @Register: register the struct under its current type name. @Register="stable_name" selects an explicit persistent name.
+ *   Names must be nonempty and unique across the catalog; duplicates fail compilation with both declaration locations.
+ *   Enables name/Type lookup and MySerialize Type references; does not enable excluded fields or construct objects.
+ *
+ * Struct field markers (keep notes on the field's declaration line):
+ * - @SerializeField: include the field in serialized_fields, including when the struct's default selection is disabled.
+ * - @NonSerializeField: exclude the field from both fields and serialized_fields. Overrides @SerializeField.
+ * - @DisplayName=Label: user-facing label; does not rename the field or change its serialized representation.
+ * - @Tooltip=Text: explanatory text for metadata consumers, such as an editor.
+ * - @Group=Parent|Child: editor group path; components are trimmed and must be nonempty.
+ *   Fields without an explicit group inherit their parent group's path; an explicit path replaces it rather than appending.
+ * - @Min=Number / @Max=Number: inclusive range metadata for integer/float fields, not automatic runtime clamping or validation.
+ *   Either bound may be omitted. Bounds must fit the field type and metadata representation; Min must not exceed Max.
+ *
+ * Enum member markers:
+ * - @DisplayName=Label: user-facing label for an enum member; its actual name and numeric value remain unchanged.
+ * - @Hidden: omit the member from reflected enum fields. It remains a valid enum value, including in MySerialize.
+ *   DisplayName and Hidden are the only supported enum-member markers; these are not struct-field Hidden markers.
+ *
+ * Quote the entire note for display text or paths containing spaces, for example @"DisplayName=Movement speed".
+ * Examples:
+ *   Settings :: struct @Register="game.settings" @SerializeFieldsByDefault=false {
+ *       speed: float = 1.0; @SerializeField @"DisplayName=Movement speed" @"Tooltip=World units per second" @Min=0 @Max=20
+ *       intensity: float = 0.5; @SerializeField @"Group=Graphics | Lighting" @Min=0.0 @Max=1.0
+ *       preview_only: bool; // Reflected, but not serialized because default field selection is disabled.
+ *       runtime_pointer: *void; @NonSerializeField
+ *   }
+ *   Mode :: enum {
+ *       Normal; @"DisplayName=Normal mode"
+ *       Internal; @Hidden
+ *   }
+ */
 #scope_file
 
 #import "Basic";
@@ -11,6 +57,7 @@ TablesWithCollisions :: #import "Hash_Table"(true);
 Hash :: #import "Hash";
 #load "live_reflection.jai";
 #load "table_adapter.jai";
+#load "serialization_metadata.jai";
 
 #scope_export
 
@@ -46,6 +93,15 @@ Struct_Metadata :: struct {
     name: string;
 
     is_serialized: bool;
+
+    // Empty unless @Register is present. Names are unique across the complete catalog.
+    registered_name: string;
+    declaration_location: Source_Code_Location;
+
+    // -1 means value-dependent or unsupported. Payload excludes this struct's own u64 block prefix.
+    serialized_payload_size: s64 = -1;
+    serialized_size: s64 = -1;
+    serialized_depth: int;
 
     serialize_fields_by_default: bool = true;
 
@@ -180,6 +236,46 @@ reflected_enums :: () -> []Enum_Metadata {
     return reflected_catalog.enums;
 }
 
+/**
+ * @brief Finds a struct explicitly registered with @Register or @Register="stable_name".
+ * @param[in] name Exact, case-sensitive registered name.
+ * @return Baked metadata, or null when the name is unknown.
+ */
+find_registered_struct :: (name: string) -> *Struct_Metadata {
+    index := Tables.table_find_pointer(*reflected_catalog.registered_index, name);
+    if index == null {
+        return null;
+    }
+    return *reflected_catalog.structures[index.*];
+}
+
+/**
+ * @brief Restores a registered Type from its persistent name.
+ * @param[in] name Exact registered name.
+ * @return Type and success flag. Unknown names return a null Type and false.
+ */
+registered_type :: (name: string) -> Type, bool {
+    metadata := find_registered_struct(name);
+    if metadata == null {
+        empty: Type;
+        return empty, false;
+    }
+    return metadata.struct_type, true;
+}
+
+/**
+ * @brief Obtains the persistent name of an explicitly registered struct type.
+ * @param[in] value Runtime Type value.
+ * @return Registered name, or an empty string if the type is not registered.
+ */
+registered_type_name :: (value: Type) -> string {
+    metadata := find_struct(cast(*Type_Info)value);
+    if metadata == null {
+        return "";
+    }
+    return metadata.registered_name;
+}
+
 find_struct :: inline ($$info: *Type_Info) -> *Struct_Metadata {
     #if is_constant(info) {
         // Bake the index, not a compiler-process address into the catalog's backing array.
@@ -305,6 +401,22 @@ collect_struct :: (info: *Type_Info_Struct) -> Struct_Metadata #compile_time {
         }
         else if note == "RestrictSerialization" {
             result.restrict_serialization = true;
+        }
+        else if note == "Register" || (note.count >= "Register=".count && string.{"Register=".count, note.data} == "Register=") {
+            assert(result.registered_name.count == 0, "Register %: duplicate @Register marker.", info.name);
+            name := info.name;
+            if note != "Register" {
+                name = string.{note.count - "Register=".count, note.data + "Register=".count};
+                if name.count >= 2 && name[0] == #char "\"" && name[name.count - 1] == #char "\"" {
+                    name = string.{name.count - 2, name.data + 1};
+                }
+            }
+            assert(name.count > 0, "Register %: registered name must not be empty.", info.name);
+            for character: name {
+                assert(character >= #char " " && character != #char "\"",
+                       "Register %: registered name contains a control character or unmatched quote.", info.name);
+            }
+            result.registered_name = name;
         }
     }
     SERIALIZATION_DEFAULT_PREFIX :: "SerializeFieldsByDefault=";
@@ -673,7 +785,8 @@ register_reflected_struct :: (info: *Type_Info_Struct,
                              measure: Custom_Size_Callback = null,
                              encode: Custom_Serialize_Callback = null,
                              decode: Custom_Deserialize_Callback = null,
-                             table_adapter: Table_Adapter = .{}) #compile_time
+                             table_adapter: Table_Adapter = .{},
+                             location: Source_Code_Location = .{}) #compile_time
 {
     started := current_time_monotonic();
     defer pending_catalog.build_seconds += to_float64_seconds(current_time_monotonic() - started);
@@ -696,6 +809,7 @@ register_reflected_struct :: (info: *Type_Info_Struct,
     metadata.custom_serialize = encode;
     metadata.custom_deserialize = decode;
     metadata.table_adapter = table_adapter;
+    metadata.declaration_location = location;
     array_add(*pending_catalog.structures, metadata);
 }
 
@@ -716,13 +830,26 @@ finish_catalog :: () -> Metadata_Catalog #compile_time {
     result := Metadata_Catalog.{structures = pending_catalog.structures, enums = pending_catalog.enums};
     for metadata, index: result.structures {
         Tables.table_add(*result.struct_index, metadata.struct_type, index);
+        if metadata.registered_name.count > 0 {
+            previous := Tables.table_find_pointer(*result.registered_index, metadata.registered_name);
+            if previous != null {
+                other := result.structures[previous.*];
+                Compiler.compiler_report(sprint("Register: duplicate name '%' for type '%'; conflicts with '%'.",
+                                                metadata.registered_name, metadata.name, other.name),
+                                         metadata.declaration_location, .ERROR_CONTINUABLE);
+                Compiler.compiler_report("Register: conflicting type is declared here.", other.declaration_location);
+            }
+            Tables.table_add(*result.registered_index, metadata.registered_name, index);
+        }
     }
+    bake_serialization_sizes(result.structures);
     for metadata, index: result.enums {
         Tables.table_add(*result.enum_index, metadata.enum_type, index);
     }
     // Lookups never mutate or release these baked tables; no compiler allocator is needed at runtime.
     result.struct_index.allocator = .{};
     result.enum_index.allocator = .{};
+    result.registered_index.allocator = .{};
     // Accumulate metadata work only, excluding compiler waits between registrations.
     pending_catalog.build_seconds += to_float64_seconds(current_time_monotonic() - started);
     print("\n----------------------------------------\nMyReflection build: % ms\n----------------------------------------\n\n",
@@ -737,6 +864,7 @@ Metadata_Catalog :: struct {
     enums: []Enum_Metadata;
     struct_index: Tables.Table(Type, int, metadata_type_hash);
     enum_index: Tables.Table(Type, int, metadata_type_hash);
+    registered_index: Tables.Table(string, int);
 }
 
 // Pointer addresses change when baking. Names give stable hashes; Type identity resolves collisions.
