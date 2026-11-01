@@ -675,6 +675,9 @@ register_reflected_struct :: (info: *Type_Info_Struct,
                              decode: Custom_Deserialize_Callback = null,
                              table_adapter: Table_Adapter = .{}) #compile_time
 {
+    started := current_time_monotonic();
+    defer pending_catalog.build_seconds += to_float64_seconds(current_time_monotonic() - started);
+
     if generated_context {
         // Injected #run registrations can execute out of order. Context suffixes are compiler version numbers.
         version: u64;
@@ -697,10 +700,14 @@ register_reflected_struct :: (info: *Type_Info_Struct,
 }
 
 register_reflected_enum :: (node: *Compiler.Code_Enum) #compile_time {
+    started := current_time_monotonic();
+    defer pending_catalog.build_seconds += to_float64_seconds(current_time_monotonic() - started);
+
     array_add(*pending_catalog.enums, collect_enum_node(node));
 }
 
 finish_catalog :: () -> Metadata_Catalog #compile_time {
+    started := current_time_monotonic();
     // Jai relocates earlier generated Context versions to the final descriptor when baking.
     // Collect only the latest version so the catalog has one record and the final name/fields.
     if pending_catalog.context_info {
@@ -716,6 +723,10 @@ finish_catalog :: () -> Metadata_Catalog #compile_time {
     // Lookups never mutate or release these baked tables; no compiler allocator is needed at runtime.
     result.struct_index.allocator = .{};
     result.enum_index.allocator = .{};
+    // Accumulate metadata work only, excluding compiler waits between registrations.
+    pending_catalog.build_seconds += to_float64_seconds(current_time_monotonic() - started);
+    print("\n----------------------------------------\nMyReflection build: % ms\n----------------------------------------\n\n",
+          formatFloat(pending_catalog.build_seconds * 1000.0, trailing_width = 3, zero_removal = .NO));
     return result;
 }
 
@@ -780,6 +791,7 @@ lookup_enum_index :: (info: *Type_Info) -> int {
 }
 
 Pending_Catalog :: struct {
+    build_seconds: float64;
     context_version: u64;
     structures: [..]Struct_Metadata;
     enums: [..]Enum_Metadata;
