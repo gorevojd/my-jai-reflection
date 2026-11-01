@@ -23,6 +23,8 @@ Table_Adapter :: struct {
     access: #type (data: *u8) -> Table_Storage_Access;
     // Reserve room for count additional entries; keep existing entries intact.
     reserve: #type (data: *u8, count: s64);
+    // Checked allocation for an empty table; native insertion of count entries will not grow it.
+    try_reserve_empty: #type (data: *u8, count: s64) -> bool;
     find: #type (data: *u8, key: *u8) -> *u8;
     // Native insertion semantics: duplicate keys are permitted, and key/value storage is copied shallowly.
     insert: #type (data: *u8, key: *u8, value: *u8) -> *u8;
@@ -37,6 +39,70 @@ Table_Storage_Access :: struct {
     slots_filled: *s64;
     entries: *Array_View_64;
     allocator: *Allocator;
+}
+
+/**
+ * @brief Allocates checked storage for an empty native Hash_Table.Table, including the collision-counting variant.
+ * @param[in,out] table Empty table with no reserved storage; its allocator may be configured.
+ * @param[in] count Number of subsequent native table_add calls that must fit without allocating.
+ * @return False on invalid arguments, size overflow or allocation failure; the table remains unchanged on failure.
+ * @note Keys/values are not constructed until insertion. Reset/deinit uses the saved allocator as usual.
+ */
+try_reserve_empty_table :: (table: *$T, count: s64) -> bool {
+    #assert T.LOAD_FACTOR_PERCENT > 0 && T.LOAD_FACTOR_PERCENT < 100;
+
+    if (count < 0 ||
+        table.count != 0 ||
+        table.allocated != 0 ||
+        table.slots_filled != 0 ||
+        table.entries.count != 0 ||
+        table.entries.data != null)
+    {
+        return false;
+    }
+
+    if count == 0 {
+        return true;
+    }
+
+    MAX_SIZE :: 0x7fffffffffffffff;
+    if count > (MAX_SIZE - 99) / 100 - 1 {
+        return false;
+    }
+
+    // Leave room below table_add's >= load-factor threshold.
+    slots := max(cast(s64)T.SIZE_MIN, ((count + 1) * 100 + 99) / T.LOAD_FACTOR_PERCENT);
+    capacity: s64 = 1;
+    while capacity < slots {
+        if capacity > MAX_SIZE / 2 {
+            return false;
+        }
+        capacity *= 2;
+    }
+
+    if (capacity > MAX_SIZE / size_of(T.Entry) ||
+        capacity > MAX_SIZE / T.LOAD_FACTOR_PERCENT)
+    {
+        return false;
+    }
+
+    allocator := table.allocator;
+    if allocator.proc == null {
+        allocator = ifx context.allocator.proc != null then context.allocator else context.default_allocator;
+    }
+
+    bytes := capacity * size_of(T.Entry);
+    entries := cast(*T.Entry)alloc(bytes,, allocator);
+    if entries == null {
+        return false;
+    }
+
+    memset(entries, 0, bytes);
+    table.entries.data = entries;
+    table.entries.count = capacity;
+    table.allocated = capacity;
+    table.allocator = allocator;
+    return true;
 }
 
 #scope_module
@@ -66,6 +132,7 @@ Typed_Table_Adapter :: struct (T: Type) {
         result.next = next;
         result.access = access;
         result.reserve = reserve;
+        result.try_reserve_empty = try_reserve_empty;
         result.find = find;
         result.insert = insert;
         result.reset = reset;
@@ -116,6 +183,10 @@ Typed_Table_Adapter :: struct (T: Type) {
         else {
             table_ensure_space(table, count);
         }
+    }
+
+    try_reserve_empty :: (data: *u8, count: s64) -> bool {
+        return try_reserve_empty_table(cast(*T)data, count);
     }
 
     find :: (data: *u8, key: *u8) -> *u8 {
