@@ -213,3 +213,9 @@ array alongside the new live view. Existing `collect`, `children`, `parent`,
 
 Run `Tests/check_live_reflection.ps1` for live-view behavior and invalid-binding
 fixtures, and `Tests/check_reflection_metadata.ps1` for metadata validation.
+
+Parameterized custom codecs are validated and registered per concrete instantiation
+(for example, `Asset_Handle(Image)` and `Asset_Handle(Sound)`). Uninstantiated
+struct templates are skipped by the build hook. Declare codec arguments using the
+concrete type inside the template, e.g. `value: Asset_Handle(T)`; the normal
+`@CustomSerialize` signatures and payload framing remain unchanged.

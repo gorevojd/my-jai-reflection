@@ -27,6 +27,10 @@ build_file :: (path: string, workspace: Workspace) {
             checked := cast(*Message_Typechecked)message;
             for item: checked.structs {
                 node := item.expression;
+                // Templates have no runtime layout or concrete codec signatures; register their instantiations instead.
+                if node.defined_type != null && node.defined_type.parameters.count > 0 {
+                    continue;
+                }
                 if !node.defined_type || already_seen(*seen, node.defined_type) {
                     continue;
                 }

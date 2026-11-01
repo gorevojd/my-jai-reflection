@@ -11,6 +11,8 @@
  *     serialize :: (destination: BinaryView, value: T) -> s64;
  *     deserialize :: (source: BinaryView, value: *T) -> s64;
  *   Sizes/counts describe the custom payload without its outer u64 prefix; return -1 on failure.
+ *   For parameterized structs, each concrete instantiation supplies these exact signatures for its own type.
+ *   The build hook skips uninstantiated templates; e.g. Handle(Image) is checked, not the Handle(T: Type) template.
  *   Field-selection markers do not control callback code. See MySerialize/module.jai for the complete callback contract.
  * - @RestrictSerialization: MySerialize rejects serialization/deserialization of this struct's object data.
  *   Takes precedence over @CustomSerialize. Does not prevent a registered Type from being stored as a type reference.
