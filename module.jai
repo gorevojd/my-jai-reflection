@@ -58,7 +58,7 @@ Tables :: #import "Hash_Table";
 TablesWithCollisions :: #import "Hash_Table"(true);
 Hash :: #import "Hash";
 #load "live_reflection.jai";
-#load "table_adapter.jai";
+#load "hash_collection_adapter.jai";
 #load "serialization_metadata.jai";
 
 #scope_export
@@ -87,7 +87,9 @@ Struct_Metadata :: struct {
     custom_serialization: bool;
     restrict_serialization: bool;
     is_hash_table: bool;
-    table_adapter: Table_Adapter;
+    is_hash_set: bool;
+    // Shared hash-collection adapter; the field name is retained for existing table consumers.
+    table_adapter: Hash_Collection_Adapter;
     custom_size: Custom_Size_Callback;
     custom_serialize: Custom_Serialize_Callback;
     custom_deserialize: Custom_Deserialize_Callback;
@@ -394,6 +396,7 @@ collect_struct :: (info: *Type_Info_Struct) -> Struct_Metadata #compile_time {
     result := Struct_Metadata.{struct_type = Compiler.get_type(info), name = info.name, is_serialized = true};
 
     result.is_hash_table = is_standard_table(info) || is_counted_table(info);
+    result.is_hash_set = is_hash_set(info);
     for note: info.notes {
         if note == "CustomSerialize" {
             result.custom_serialization = true;
@@ -509,6 +512,10 @@ collect_structs :: (roots: ..*Type_Info) -> []Struct_Metadata #compile_time {
             array_add(*pending, (cast(*Type_Info_Array)info).element_type);
         }
         else if info.type == .STRUCT {
+            if is_hash_set(info) {
+                array_add(*result, collect_struct(cast(*Type_Info_Struct)info));
+                continue;
+            }
             if is_standard_table(info) || is_counted_table(info) {
                 table := collect_table_metadata(cast(*Type_Info_Struct)info);
                 array_add(*pending, cast(*Type_Info)table.value_type);
@@ -713,7 +720,7 @@ collect :: (info: *Type_Info, leaf_types: []*Type_Info = .[]) -> []Entry #compil
         cursor += 1;
         node := entries[node_index];
         member_info := cast(*Type_Info)node.member_type;
-        if member_info.type != .STRUCT || node.table_meta.storage.entry_size > 0 {
+        if member_info.type != .STRUCT || node.table_meta.storage.entry_size > 0 || node.struct_meta.is_hash_set {
             continue;
         }
         if node_index > 0 {

@@ -219,3 +219,37 @@ Parameterized custom codecs are validated and registered per concrete instantiat
 struct templates are skipped by the build hook. Declare codec arguments using the
 concrete type inside the template, e.g. `value: Asset_Handle(T)`; the normal
 `@CustomSerialize` signatures and payload framing remain unchanged.
+
+## Hash sets and serialization adapters
+
+`MyBasic/MyHashSet.HashSet(K)` is recognized by exact generic type identity, including
+custom hash/comparison callbacks and load factors. `Struct_Metadata.is_hash_set`
+and `Type_Metadata.is_set` distinguish sets from tables. The existing
+`Struct_Metadata.table_adapter` field now holds a `Hash_Collection_Adapter`;
+its `kind` is `Set` or `Table`. `Table_Adapter` remains a compatibility alias.
+Both use the same checked capacity calculation and storage adapter. Set adapters
+have no value type or value pointer; `contains` tests membership, `insert` ignores
+the value argument, and `find` is null. Borrowed key pointers must not be edited
+while they participate in the hash index.
+
+MySerialize encodes a raw set as `[u64 payload size][u64 count][serialized keys...]`,
+which matches the array format for the same keys in iteration order. Keys may use
+the usual field-selection markers or custom codecs. Hash/comparison functions,
+allocator, capacity and tombstones are not serialized; the destination type supplies
+them. Equal decoded keys are rejected, including keys made equal by skipped fields
+or custom codecs. Order is unspecified, so identical membership does not promise
+identical bytes. A deterministic format would need an explicit sorting policy.
+
+`MyBasic.Name_Set` wraps `HashSet(Name, name_hash, names_equal)` in its `set` field,
+like `MyName.Name_Table` wraps a table. It uses ordinary set operations on `names.set`.
+Names serialize as text and are interned again when read. The wrapper has its normal
+struct frame around the set frame. Deserialized string keys own their bytes, while
+Name keys share process-lived interned storage and must not be freed.
+
+On failed reads, partially decoded entries remain attached for caller cleanup,
+including duplicate keys. Only iteration and reset/deinit are valid until that
+storage is discarded. Do not look up or insert into a failed result.
+
+Live views and legacy field trees treat sets as leaves, hiding implementation
+storage. Dedicated live set traversal/editing is not implemented yet; exposing
+mutable key fields as ordinary properties would invalidate the hash index.

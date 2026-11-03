@@ -69,6 +69,7 @@ calculate_fixed_serialization_size :: (info: *Type_Info,
     if (metadata.custom_serialization ||
         metadata.restrict_serialization ||
         metadata.is_hash_table ||
+        metadata.is_hash_set ||
         (structure.textual_flags & .UNION) ||
         (structure.textual_flags & .UNION_IS_TAGGED))
     {

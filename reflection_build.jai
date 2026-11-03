@@ -104,10 +104,10 @@ GENERATED_CONTEXT :: %;
                                     location = C.make_location(cast(*C.Code_Struct)STRUCT_ADDRESS));
 }
 else {
-    #if #run R.has_table_adapter(cast(*Type_Info_Struct)INFO_ADDRESS) {
+    #if #run R.has_hash_collection_adapter(cast(*Type_Info_Struct)INFO_ADDRESS) {
         Registered_Type :: #run C.get_type(cast(*Type_Info_Struct)INFO_ADDRESS);
         #run R.register_reflected_struct(type_info(Registered_Type), GENERATED_CONTEXT,
-                                        table_adapter = R.Typed_Table_Adapter(Registered_Type).metadata(),
+                                        table_adapter = R.Typed_Hash_Collection_Adapter(Registered_Type).metadata(),
                                         location = C.make_location(cast(*C.Code_Struct)STRUCT_ADDRESS));
     }
     else {

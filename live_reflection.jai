@@ -40,6 +40,7 @@ Type_Metadata :: struct {
     enum_meta: *Enum_Metadata;
     array_meta: Array_Metadata;
     is_table: bool;
+    is_set: bool;
 }
 
 Property_Binding :: struct {
@@ -148,6 +149,7 @@ type_metadata :: (info: *Type_Info) -> Type_Metadata {
     if base.type == .STRUCT {
         result.struct_meta = find_struct(base);
         result.is_table = live_table_kind(base) != .None;
+        result.is_set = is_hash_set(base);
     }
     else if base.type == .ENUM {
         result.enum_meta = find_enum(base);
@@ -315,7 +317,7 @@ get_property :: (view: Reflection, name: string) -> Reflection {
         }
     }
     metadata := type_metadata(source.root.type);
-    if !metadata.struct_meta || metadata.is_table {
+    if !metadata.struct_meta || metadata.is_table || metadata.is_set {
         return .{};
     }
     for *field: metadata.struct_meta.fields {
@@ -335,7 +337,7 @@ get_property_count :: (view: Reflection) -> int {
     }
     result: int;
     metadata := type_metadata(source.root.type);
-    if metadata.struct_meta && !metadata.is_table {
+    if metadata.struct_meta && !metadata.is_table && !metadata.is_set {
         for field: metadata.struct_meta.fields {
             if !live_property_binding(source, field.name) {
                 result += 1;
@@ -356,7 +358,7 @@ get_property_name :: (view: Reflection, index: int) -> string {
         return "";
     }
     metadata := type_metadata(source.root.type);
-    if metadata.struct_meta && !metadata.is_table {
+    if metadata.struct_meta && !metadata.is_table && !metadata.is_set {
         for field: metadata.struct_meta.fields {
             if live_property_binding(source, field.name) {
                 continue;
@@ -672,6 +674,10 @@ live_collection_types :: (root: *Type_Info) -> []Type #compile_time {
             array_add(*result, LiveCompiler.get_type(info));
             metadata := collect_table_metadata(cast(*Type_Info_Struct)info);
             array_add(*pending, cast(*Type_Info)metadata.value_type);
+        }
+        else if is_hash_set(info) {
+            // Set keys are immutable. Dedicated live set navigation is not exposed yet.
+            continue;
         }
         else if info.type == .STRUCT {
             metadata := collect_struct(cast(*Type_Info_Struct)info);
