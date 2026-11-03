@@ -1,7 +1,6 @@
 #scope_file
 #import "Basic";
 #import "MyBasic";
-#import "MyBasic/MyName";
 Math :: #import "MyMath";
 
 Size_Bake_State :: enum {
@@ -31,7 +30,7 @@ calculate_fixed_serialization_size :: (info: *Type_Info,
     if info.type == .BOOL || info.type == .INTEGER || info.type == .FLOAT || info.type == .ENUM {
         return info.runtime_size, 0;
     }
-    if info == type_info(Name) || info == type_info(Binary) || info == type_info(BinaryView) {
+    if info == type_info(Name) || info == type_info(Blob) || info == type_info(BlobView) {
         return -1, 0;
     }
     if info.type == .ARRAY {

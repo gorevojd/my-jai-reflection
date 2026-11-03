@@ -8,8 +8,8 @@
  *   @SerializeFieldsByDefault=false: serialize only fields explicitly marked @SerializeField.
  * - @CustomSerialize: MySerialize uses the struct's own codec instead of traversing its fields. The build hook requires:
  *     get_serialization_size :: (value: T) -> s64;
- *     serialize :: (destination: BinaryView, value: T) -> s64;
- *     deserialize :: (source: BinaryView, value: *T) -> s64;
+ *     serialize :: (destination: BlobView, value: T) -> s64;
+ *     deserialize :: (source: BlobView, value: *T) -> s64;
  *   Sizes/counts describe the custom payload without its outer u64 prefix; return -1 on failure.
  *   For parameterized structs, each concrete instantiation supplies these exact signatures for its own type.
  *   The build hook skips uninstantiated templates; e.g. Handle(Image) is checked, not the Handle(T: Type) template.
@@ -69,8 +69,8 @@ Numeric_Range :: struct {
 }
 
 Custom_Size_Callback :: #type (data: *u8) -> s64;
-Custom_Serialize_Callback :: #type (destination: Strings.BinaryView, data: *u8) -> s64;
-Custom_Deserialize_Callback :: #type (source: Strings.BinaryView, data: *u8) -> s64;
+Custom_Serialize_Callback :: #type (destination: Strings.BlobView, data: *u8) -> s64;
+Custom_Deserialize_Callback :: #type (source: Strings.BlobView, data: *u8) -> s64;
 
 Field_Metadata :: struct {
     name: string;
@@ -401,7 +401,7 @@ collect_struct :: (info: *Type_Info_Struct) -> Struct_Metadata #compile_time {
         if note == "CustomSerialize" {
             result.custom_serialization = true;
             assert(has_custom_serialization_methods(info),
-                   "CustomSerialize % requires get_serialization_size(T), serialize(BinaryView, T), deserialize(BinaryView, *T), all returning s64.",
+                   "CustomSerialize % requires get_serialization_size(T), serialize(BlobView, T), deserialize(BlobView, *T), all returning s64.",
                    info.name);
         }
         else if note == "RestrictSerialization" {
@@ -764,7 +764,7 @@ has_custom_serialization_methods :: (info: *Type_Info_Struct) -> bool #compile_t
         if member.name == "get_serialization_size" && procedure.argument_types.count == 1 {
             measure = procedure.argument_types[0] == info;
         }
-        else if procedure.argument_types.count == 2 && procedure.argument_types[0] == type_info(Strings.BinaryView) {
+        else if procedure.argument_types.count == 2 && procedure.argument_types[0] == type_info(Strings.BlobView) {
             if member.name == "serialize" {
                 encode = procedure.argument_types[1] == info;
             }
@@ -781,10 +781,10 @@ Custom_Serialization :: struct (T: Type) {
     measure :: (data: *u8) -> s64 {
         return T.get_serialization_size((cast(*T)data).*);
     }
-    encode :: (destination: Strings.BinaryView, data: *u8) -> s64 {
+    encode :: (destination: Strings.BlobView, data: *u8) -> s64 {
         return T.serialize(destination, (cast(*T)data).*);
     }
-    decode :: (source: Strings.BinaryView, data: *u8) -> s64 {
+    decode :: (source: Strings.BlobView, data: *u8) -> s64 {
         return T.deserialize(source, cast(*T)data);
     }
 }
