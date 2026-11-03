@@ -1,6 +1,7 @@
 #scope_file
 #import "Basic";
 #import "MyBasic";
+#import "MyBasic/MyName";
 Math :: #import "MyMath";
 
 Size_Bake_State :: enum {
