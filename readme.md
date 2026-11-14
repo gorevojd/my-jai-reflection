@@ -22,6 +22,11 @@ Jai standard library: `Basic`, `Compiler`, `Hash`, `Hash_Table`.
 Install these modules and their dependencies, and add each module's parent directory
 to the compiler's module search path.
 
+When bundled in my-jai-core, initialize the checkout with
+`git submodule update --init --recursive` and add the directory containing Core
+and Core itself to the search path (`Src/Modules` and `Src/Modules/my-jai-core`
+in PacCodex).
+
 ## Values and types
 
 ```jai
