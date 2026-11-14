@@ -1,7 +1,7 @@
 #scope_file
 #import "Basic";
 #import "Hash_Table";
-Sets :: #import "MyBasic/MyHashSet";
+Sets :: #import "my-jai-hash-set";
 CountedTables :: #import "Hash_Table"(true);
 
 #scope_export

@@ -1,7 +1,7 @@
 #scope_file
 #import "Basic";
-#import "MyBasic";
-Math :: #import "MyMath";
+#import "my-jai-core";
+Math :: #import "my-jai-math";
 
 Size_Bake_State :: enum {
     Unvisited;

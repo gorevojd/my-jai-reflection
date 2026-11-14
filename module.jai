@@ -13,7 +13,7 @@
  *   Sizes/counts describe the custom payload without its outer u64 prefix; return -1 on failure.
  *   For parameterized structs, each concrete instantiation supplies these exact signatures for its own type.
  *   The build hook skips uninstantiated templates; e.g. Handle(Image) is checked, not the Handle(T: Type) template.
- *   Field-selection markers do not control callback code. See MySerialize/module.jai for the complete callback contract.
+ *   Field-selection markers do not control callback code. See my-jai-serializer/module.jai for the complete callback contract.
  * - @RestrictSerialization: MySerialize rejects serialization/deserialization of this struct's object data.
  *   Takes precedence over @CustomSerialize. Does not prevent a registered Type from being stored as a type reference.
  * - @Register: register the struct under its current type name. @Register="stable_name" selects an explicit persistent name.
@@ -51,8 +51,8 @@
 #scope_file
 
 #import "Basic";
-Math :: #import "MyMath";
-Strings :: #import "MyBasic";
+Math :: #import "my-jai-math";
+Strings :: #import "my-jai-core";
 Compiler :: #import "Compiler";
 Tables :: #import "Hash_Table";
 TablesWithCollisions :: #import "Hash_Table"(true);

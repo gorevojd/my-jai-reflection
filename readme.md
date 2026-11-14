@@ -1,4 +1,4 @@
-# MyReflection
+# my-jai-reflection
 
 Jai type metadata is collected and baked during compilation. Live reflection binds
 that shared data and generated operations to an existing object. Build through
@@ -8,10 +8,24 @@ metaprogram. No per-object registration or metadata construction is required.
 The complete supported-marker reference is at the beginning of [module.jai](module.jai),
 including scopes, defaults, precedence, custom codec signatures and examples.
 
+## Dependencies
+
+Direct module dependencies:
+
+- [my-jai-core](https://github.com/gorevojd/my-jai-core): shared string utilities and types.
+- [my-jai-hash-set](https://github.com/gorevojd/my-jai-hash-set): hash-set metadata and collection adapters.
+- [my-jai-math](https://github.com/gorevojd/my-jai-math): math and color type metadata.
+
+Jai standard library: `Basic`, `Compiler`, `Hash`, `Hash_Table`.
+
+`Compiler` is used for compile-time metadata generation and the build hook.
+Install these modules and their dependencies, and add each module's parent directory
+to the compiler's module search path.
+
 ## Values and types
 
 ```jai
-R :: #import "MyReflection";
+R :: #import "my-jai-reflection";
 
 number: float = 1.25;
 view := R.create(*number);
@@ -78,16 +92,16 @@ metadata := R.find_registered_struct(name);
 
 These APIs expose the same registry to configuration readers and binary codecs;
 they do not create objects or automatically add Type support to a configuration
-module. MySerialize uses the name for selected Type fields, never the runtime
+module. my-jai-serializer uses the name for selected Type fields, never the runtime
 descriptor address. Registration is independent of field selection and
 `@RestrictSerialization`: referencing a Type does not serialize an instance.
 
 The completed catalog also stores `serialized_payload_size` (without the
 struct's own u64 frame prefix), `serialized_size` (including it), and
-`serialized_depth`. These describe MySerialize's format, not `size_of(T)` or
+`serialized_depth`. These describe my-jai-serializer's format, not `size_of(T)` or
 deserialization allocations. Nested frame prefixes and array counts are included;
 padding and excluded fields are not. A size of -1 means value-dependent or
-unsupported, including custom codecs, unions and restricted types. MySerialize
+unsupported, including custom codecs, unions and restricted types. my-jai-serializer
 uses constant sizes during measurement while preserving the existing wire format
 and depth checks. Runtime writing and reading still visit fields.
 
@@ -222,7 +236,7 @@ concrete type inside the template, e.g. `value: Asset_Handle(T)`; the normal
 
 ## Hash sets and serialization adapters
 
-`MyBasic/MyHashSet.HashSet(K)` is recognized by exact generic type identity, including
+`HashSet(K)` from `my-jai-hash-set` is recognized by exact generic type identity, including
 custom hash/comparison callbacks and load factors. `Struct_Metadata.is_hash_set`
 and `Type_Metadata.is_set` distinguish sets from tables. The existing
 `Struct_Metadata.table_adapter` field now holds a `Hash_Collection_Adapter`;
@@ -232,7 +246,7 @@ have no value type or value pointer; `contains` tests membership, `insert` ignor
 the value argument, and `find` is null. Borrowed key pointers must not be edited
 while they participate in the hash index.
 
-MySerialize encodes a raw set as `[u64 payload size][u64 count][serialized keys...]`,
+my-jai-serializer encodes a raw set as `[u64 payload size][u64 count][serialized keys...]`,
 which matches the array format for the same keys in iteration order. Keys may use
 the usual field-selection markers or custom codecs. Hash/comparison functions,
 allocator, capacity and tombstones are not serialized; the destination type supplies

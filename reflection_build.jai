@@ -19,7 +19,7 @@ build_file :: (path: string, workspace: Workspace) {
         message := compiler_wait_for_message();
         if message.kind == .IMPORT {
             imported := cast(*Message_Import)message;
-            if imported.module_name == "MyReflection" {
+            if imported.module_name == "my-jai-reflection" {
                 reflection_import = imported;
             }
         }
@@ -90,7 +90,7 @@ build_file :: (path: string, workspace: Workspace) {
 
 STRUCT_REGISTRATION :: #string END_REGISTRATION
 #scope_file
-R :: #import "MyReflection";
+R :: #import "my-jai-reflection";
 C :: #import "Compiler";
 INFO_ADDRESS :: %;
 STRUCT_ADDRESS :: %;
@@ -119,7 +119,7 @@ END_REGISTRATION
 
 ENUM_REGISTRATION :: #string END_REGISTRATION
 #run {
-    R :: #import "MyReflection";
+    R :: #import "my-jai-reflection";
     C :: #import "Compiler";
     R.register_reflected_enum(cast(*C.Code_Enum)%);
 }
