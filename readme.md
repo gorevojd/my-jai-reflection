@@ -2,8 +2,9 @@
 
 Jai type metadata is collected and baked during compilation. Live reflection binds
 that shared data and generated operations to an existing object. Build through
-`ReflectionBuild.build_file` from `reflection_build.jai`, as in the project's build
-metaprogram. No per-object registration or metadata construction is required.
+`ReflectionBuild.build_file` from `reflection_build.jai`; the standalone build
+example below shows a complete metaprogram. No per-object registration or
+metadata construction is required.
 
 The complete supported-marker reference is at the beginning of [module.jai](module.jai),
 including scopes, defaults, precedence, custom codec signatures and examples.
@@ -24,8 +25,83 @@ to the compiler's module search path.
 
 When bundled in my-jai-core, initialize the checkout with
 `git submodule update --init --recursive` and add the directory containing Core
-and Core itself to the search path (`Src/Modules` and `Src/Modules/my-jai-core`
-in PacCodex).
+and Core itself to the search path. For example, a checkout at
+`modules/my-jai-core` needs `modules` and `modules/my-jai-core` on that path.
+
+## Standalone build example
+
+This example uses the Core collection to provide all dependencies. From a new
+example directory, with Git and the Jai compiler on your path, initialize it with:
+
+```sh
+git clone --recurse-submodules https://github.com/gorevojd/my-jai-core modules/my-jai-core
+mkdir Build
+```
+
+Create these two source files beside the `modules` and `Build` directories:
+
+```text
+example/
+    build.jai
+    main.jai
+    modules/
+        my-jai-core/
+            my-jai-reflection/
+            ...
+    Build/
+```
+
+Save as `build.jai` (the build-only standard-library imports are `Basic` and
+`Compiler`):
+
+```jai
+#run {
+    #import "Basic";
+    #import "Compiler";
+    ReflectionBuild :: #import,file "modules/my-jai-core/my-jai-reflection/reflection_build.jai";
+
+    parent_options := get_build_options();
+    driver_options: Build_Options_During_Compile;
+    driver_options.do_output = false;
+    set_build_options_dc(driver_options);
+
+    workspace := compiler_create_workspace("example");
+    options := get_build_options(workspace);
+    copy_commonly_propagated_fields(parent_options, *options);
+
+    module_paths: [..]string;
+    array_add(*module_paths, sprint("%modules", #filepath));
+    array_add(*module_paths, sprint("%modules/my-jai-core", #filepath));
+    array_add(*module_paths, ..options.import_path);
+    options.import_path = module_paths;
+    options.output_path = sprint("%Build", #filepath);
+    options.output_executable_name = "example";
+    options.intermediate_path = sprint("%Build/.build", #filepath);
+    set_build_options(options, workspace);
+
+    ReflectionBuild.build_file(sprint("%main.jai", #filepath), workspace);
+}
+```
+
+Save as `main.jai`:
+
+```jai
+#import "Basic";
+#import "my-jai-reflection";
+
+main :: () {
+    number: float = 1.25;
+    view := create(*number);
+    value, success := get_value(view, float);
+    assert(success && value == number);
+    print("Reflected value: %\n", value);
+}
+```
+
+Run `jai build.jai -output_path Build` from the example directory, then run
+`Build/example.exe` on Windows or `./Build/example` on Linux/macOS.
+The hook compiles `main.jai` and generates its reflection metadata; a direct
+compilation of `main.jai` does not run that hook.
 
 ## Values and types
 
@@ -230,8 +306,9 @@ procedure's typed results. Ownership follows the procedure's ordinary contract.
 array alongside the new live view. Existing `collect`, `children`, `parent`,
 `reflection_value`, array/table accessors and serialization helpers remain available.
 
-Run `Tests/check_live_reflection.ps1` for live-view behavior and invalid-binding
-fixtures, and `Tests/check_reflection_metadata.ps1` for metadata validation.
+The standalone example above checks that a typed value can be read through its
+live view. When adding custom bindings, also check read/write permissions,
+setter rejection and the lifetime of the bound object in your application.
 
 Parameterized custom codecs are validated and registered per concrete instantiation
 (for example, `Asset_Handle(Image)` and `Asset_Handle(Sound)`). Uninstantiated
